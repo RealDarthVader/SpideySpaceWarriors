@@ -846,34 +846,39 @@ function drawParticles() {
 // GAME LOGIC
 // =====================================================
 function getSpawnRate() {
-  // Aggressive curve: drops fast, floors at MIN_SPAWN
-  const base = INIT_SPAWN - score * 3.5;
-  // After score 15, additional acceleration
-  const bonus = score > 15 ? (score - 15) * 1.5 : 0;
-  return Math.max(MIN_SPAWN, base - bonus);
+  // Fast early ramp, then diminishing returns so it doesn't become instant
+  if (score <= 15) return Math.max(MIN_SPAWN, INIT_SPAWN - score * 3.2);
+  // After 15: slower taper toward floor
+  const base = INIT_SPAWN - 15 * 3.2;
+  return Math.max(MIN_SPAWN, base - (score - 15) * 0.8);
 }
 
 function getAsteroidType() {
   const r = Math.random();
   if (score < 4)  return r < 0.9 ? 'small' : 'medium';
   if (score < 10) return r < 0.5 ? 'small' : r < 0.88 ? 'medium' : 'large';
-  if (score < 20) return r < 0.25 ? 'small' : r < 0.65 ? 'medium' : 'large';
-  return r < 0.15 ? 'small' : r < 0.50 ? 'medium' : 'large';
+  if (score < 20) return r < 0.3 ? 'small' : r < 0.7 ? 'medium' : 'large';
+  // Late game: still some small ones for breathing room
+  return r < 0.2 ? 'small' : r < 0.55 ? 'medium' : 'large';
 }
 
 const ATYPE = {
   small:  { size: 4, hp: 1, spd: 1.0,  color: '#33aa44' },
-  medium: { size: 7, hp: 2, spd: 0.8,  color: '#cc5533' },
-  large:  { size: 10, hp: 3, spd: 0.55, color: '#8833aa' }
+  medium: { size: 7, hp: 2, spd: 0.75, color: '#cc5533' },
+  large:  { size: 10, hp: 3, spd: 0.5,  color: '#8833aa' }
 };
 
 function spawnAsteroid() {
   const type = getAsteroidType();
   const td = ATYPE[type];
-  // Aggressive speed scaling — each kill adds 1.8% speed
-  const sm = 1 + score * 0.018;
-  // After score 20, additional speed surge
-  const surge = score > 20 ? 1 + (score - 20) * 0.012 : 1;
+  // Speed scaling: strong early, diminishing returns past 20
+  let sm;
+  if (score <= 20) {
+    sm = 1 + score * 0.015;
+  } else {
+    // Logarithmic growth past 20 — still increasing but won't go insane
+    sm = 1.3 + Math.log(1 + (score - 20) * 0.15) * 0.4;
+  }
 
   let sx, sy;
   const edge = Math.random()*4|0;
@@ -884,10 +889,10 @@ function spawnAsteroid() {
     case 3: sx = -td.size-2; sy = Math.random()*GH; break;
   }
 
-  // Tighter aim — less randomness as score increases
-  const aimSpread = Math.max(0.15, 0.5 - score * 0.012);
+  // Aim tightens with score but always leaves dodging room
+  const aimSpread = Math.max(0.28, 0.55 - score * 0.01);
   const ang = Math.atan2(P.y-sy, P.x-sx) + (Math.random()-0.5) * aimSpread;
-  const finalSpd = td.spd * sm * surge;
+  const finalSpd = td.spd * sm;
 
   asteroids.push({
     x: sx, y: sy,
@@ -941,7 +946,7 @@ function collide() {
           sndExplode();
           // Burst wave every 5 kills
           if (score % 5 === 0 && score > 0) {
-            spawnBurstWave(Math.min(6, 3 + Math.floor(score / 10)));
+            spawnBurstWave(Math.min(4, 2 + Math.floor(score / 12)));
           }
         } else {
           miniSpark(b.x, b.y);
@@ -1033,15 +1038,14 @@ function update() {
   spawnTimer--;
   if (spawnTimer <= 0) {
     spawnAsteroid();
-    // Multi-spawn: additional asteroids at higher scores
-    if (score >= 12) spawnAsteroid();
-    if (score >= 25) spawnAsteroid();
+    // Double-spawn after score 15 (not triple — keep it survivable)
+    if (score >= 15) spawnAsteroid();
     spawnTimer = getSpawnRate();
   }
 
-  // Time pressure: extra spawn every 600 frames (~10s)
-  if (gameTime > 0 && gameTime % 600 === 0 && score >= 5) {
-    const extra = Math.min(4, 1 + Math.floor(score / 10));
+  // Time pressure: extra spawn every ~15 seconds
+  if (gameTime > 0 && gameTime % 900 === 0 && score >= 8) {
+    const extra = Math.min(3, 1 + Math.floor(score / 15));
     for (let i = 0; i < extra; i++) spawnAsteroid();
   }
 
