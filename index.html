@@ -30,14 +30,29 @@ html,body{width:100%;height:100%;overflow:hidden;background:#030810;font-family:
 .menu-btn{
   width:30px;height:30px;background:#cc6600;border:2px solid #ff8800;
   border-radius:3px;display:flex;align-items:center;justify-content:center;
-  cursor:pointer;flex-shrink:0;position:relative;
+  cursor:pointer;flex-shrink:0;position:relative;appearance:none;padding:0;
 }
 .menu-btn::before,.menu-btn::after,.menu-btn span{
   content:'';display:block;width:14px;height:2px;background:#fff;position:absolute;
+  transition:background 0.12s,opacity 0.12s,transform 0.12s;
 }
 .menu-btn::before{top:8px}
 .menu-btn span{top:14px}
 .menu-btn::after{top:20px}
+.menu-btn.music-on{
+  background:#00ccff;border-color:#00eeff;
+  box-shadow:0 0 10px rgba(0,200,255,0.35),0 2px 0 #0088aa;
+}
+.menu-btn.music-on::before{transform:translateY(1px)}
+.menu-btn.music-on span{transform:translateY(-2px)}
+.menu-btn.music-on::after{transform:translateY(2px)}
+.menu-btn.music-muted{
+  background:#182844;border-color:#2a4a6a;
+  box-shadow:0 2px 0 #0a1520;
+}
+.menu-btn.music-muted::before,.menu-btn.music-muted::after,.menu-btn.music-muted span{
+  background:#557788;opacity:0.7;
+}
 .title{
   font-size:9px;color:#00ddff;letter-spacing:2px;
   text-shadow:0 0 8px rgba(0,220,255,0.4);
@@ -202,7 +217,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#030810;font-family:
 <div id="container">
   <!-- TOP BAR -->
   <div id="top-bar">
-    <div class="menu-btn"><span></span></div>
+    <button class="menu-btn music-on" id="music-toggle" type="button" aria-label="Toggle music" title="Toggle music"><span></span></button>
     <div class="title">
       SPIDEY
       <svg width="18" height="18" viewBox="0 0 18 18" style="image-rendering:pixelated">
@@ -369,11 +384,152 @@ const buildings = [
 // AUDIO ENGINE (Web Audio API — 8-bit sounds)
 // =====================================================
 let audioCtx = null;
+let musicGain = null;
+let musicTimer = null;
+let musicStep = 0;
+let nextMusicTime = 0;
+let musicMuted = false;
+const MUSIC_BPM = 132;
+const MUSIC_STEP = 60 / MUSIC_BPM / 4;
+const MUSIC_VOL = 0.045;
+const BASS_LINE = [
+  36,null,36,43,46,null,43,null,
+  39,null,39,46,48,null,46,null,
+  36,null,36,43,46,null,48,46,
+  41,null,41,48,46,null,43,null
+];
+const LEAD_LINE = [
+  null,60,null,63,65,null,67,null,
+  70,67,null,65,null,63,60,null,
+  null,72,70,null,67,null,65,67,
+  70,null,72,null,75,72,70,null
+];
+const CHORD_ROOTS = [48, 51, 53, 46];
 
 function ensureAudio() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = musicMuted ? 0 : MUSIC_VOL;
+    musicGain.connect(audioCtx.destination);
+  }
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
+}
+
+function noteFreq(note) {
+  return 440 * Math.pow(2, (note - 69) / 12);
+}
+
+function updateMusicButton() {
+  const btn = document.getElementById('music-toggle');
+  if (!btn) return;
+  btn.classList.toggle('music-on', !musicMuted);
+  btn.classList.toggle('music-muted', musicMuted);
+  btn.setAttribute('aria-pressed', String(!musicMuted));
+}
+
+function setMusicMuted(muted) {
+  musicMuted = muted;
+  updateMusicButton();
+  if (!musicGain || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  musicGain.gain.cancelScheduledValues(t);
+  musicGain.gain.setTargetAtTime(musicMuted ? 0 : MUSIC_VOL, t, 0.03);
+}
+
+function chipTone(note, t, dur, type, vol, slideTo = null) {
+  if (note === null || !musicGain) return;
+  const c = ensureAudio();
+  const o = c.createOscillator();
+  const g = c.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(noteFreq(note), t);
+  if (slideTo !== null) {
+    o.frequency.exponentialRampToValueAtTime(noteFreq(slideTo), t + dur);
+  }
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.006);
+  g.gain.setValueAtTime(vol, t + dur * 0.55);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(musicGain);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+
+function chipNoise(t, dur, vol, cutoff) {
+  if (!musicGain) return;
+  const c = ensureAudio();
+  const buf = c.createBuffer(1, Math.max(1, c.sampleRate * dur | 0), c.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+  const src = c.createBufferSource();
+  const filter = c.createBiquadFilter();
+  const g = c.createGain();
+  src.buffer = buf;
+  filter.type = 'highpass';
+  filter.frequency.value = cutoff;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(filter); filter.connect(g); g.connect(musicGain);
+  src.start(t); src.stop(t + dur);
+}
+
+function playMusicStep(step, t) {
+  const beat = step % 16;
+  const bar = Math.floor(step / 8) % CHORD_ROOTS.length;
+
+  chipTone(BASS_LINE[step], t, MUSIC_STEP * 1.45, 'square', 0.12);
+  chipTone(LEAD_LINE[step], t + MUSIC_STEP * 0.08, MUSIC_STEP * 1.35, 'square', 0.055);
+
+  if ([0, 3, 6].includes(step % 8)) {
+    const root = CHORD_ROOTS[bar];
+    [root + 12, root + 15, root + 19].forEach((n, i) => {
+      chipTone(n, t + i * 0.006, MUSIC_STEP * 1.15, 'triangle', 0.028);
+    });
+  }
+
+  if (beat === 0 || beat === 10) chipTone(43, t, MUSIC_STEP * 0.75, 'square', 0.14, 34);
+  if (beat === 4 || beat === 12) {
+    chipNoise(t, MUSIC_STEP * 0.9, 0.08, 900);
+    chipTone(38, t, MUSIC_STEP * 0.55, 'square', 0.035, 31);
+  }
+  if (step % 2 === 1) chipNoise(t, MUSIC_STEP * 0.35, 0.025, 4200);
+}
+
+function scheduleMusic() {
+  if (!audioCtx) return;
+  while (nextMusicTime < audioCtx.currentTime + 0.45) {
+    playMusicStep(musicStep, nextMusicTime);
+    musicStep = (musicStep + 1) % BASS_LINE.length;
+    nextMusicTime += MUSIC_STEP;
+  }
+}
+
+function startMusic() {
+  const c = ensureAudio();
+  if (!musicGain) return;
+  if (musicTimer) {
+    setMusicMuted(musicMuted);
+    return;
+  }
+  musicStep = 0;
+  nextMusicTime = c.currentTime + 0.04;
+  setMusicMuted(musicMuted);
+  scheduleMusic();
+  musicTimer = setInterval(scheduleMusic, 60);
+}
+
+function stopMusic() {
+  if (musicTimer) {
+    clearInterval(musicTimer);
+    musicTimer = null;
+  }
+  if (!audioCtx || !musicGain) return;
+  const t = audioCtx.currentTime;
+  musicGain.gain.cancelScheduledValues(t);
+  musicGain.gain.setTargetAtTime(0, t, 0.05);
 }
 
 function sndShoot() {
@@ -444,6 +600,17 @@ function sndGameOver() {
       o.start(t + i * 0.22); o.stop(t + i * 0.22 + 0.22);
     });
   } catch(e) {}
+}
+
+const musicToggle = document.getElementById('music-toggle');
+if (musicToggle) {
+  musicToggle.addEventListener('click', () => {
+    ensureAudio();
+    setMusicMuted(!musicMuted);
+    if (state === 'playing') startMusic();
+    else stopMusic();
+  });
+  updateMusicButton();
 }
 
 // =====================================================
@@ -1152,6 +1319,7 @@ function doGameOver() {
   state = 'gameover';
   document.getElementById('go-score').textContent = `ASTEROIDS DESTROYED: ${score}`;
   document.getElementById('gameover-overlay').classList.add('show');
+  stopMusic();
   sndGameOver();
 }
 
@@ -1162,6 +1330,7 @@ function startGame() {
   document.getElementById('start-overlay').classList.add('hide');
   state = 'playing';
   ensureAudio();
+  startMusic();
 }
 
 function restart() {
@@ -1174,6 +1343,7 @@ function restart() {
   state = 'playing';
   document.getElementById('gameover-overlay').classList.remove('show');
   updateHP();
+  startMusic();
 }
 
 // =====================================================
