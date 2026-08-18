@@ -389,20 +389,21 @@ let musicTimer = null;
 let musicStep = 0;
 let nextMusicTime = 0;
 let musicMuted = false;
-const MUSIC_BPM = 132;
+const MUSIC_BPM = 146;
 const MUSIC_STEP = 60 / MUSIC_BPM / 4;
-const MUSIC_VOL = 0.045;
+const MUSIC_SWING = 0.24;
+const MUSIC_VOL = 0.055;
 const BASS_LINE = [
-  36,null,36,43,46,null,43,null,
-  39,null,39,46,48,null,46,null,
-  36,null,36,43,46,null,48,46,
-  41,null,41,48,46,null,43,null
+  36,null,36,39,43,36,46,null,
+  39,null,39,43,46,39,48,null,
+  36,null,43,46,48,46,43,39,
+  41,null,41,44,48,41,46,44
 ];
 const LEAD_LINE = [
-  null,60,null,63,65,null,67,null,
-  70,67,null,65,null,63,60,null,
-  null,72,70,null,67,null,65,67,
-  70,null,72,null,75,72,70,null
+  null,67,null,70,null,72,70,null,
+  63,null,67,null,70,67,null,63,
+  null,72,null,75,77,null,75,72,
+  70,null,68,null,65,63,null,60
 ];
 const CHORD_ROOTS = [48, 51, 53, 46];
 
@@ -479,23 +480,25 @@ function chipNoise(t, dur, vol, cutoff) {
 function playMusicStep(step, t) {
   const beat = step % 16;
   const bar = Math.floor(step / 8) % CHORD_ROOTS.length;
+  const funkT = t + (step % 2 ? MUSIC_STEP * MUSIC_SWING : 0);
 
-  chipTone(BASS_LINE[step], t, MUSIC_STEP * 1.45, 'square', 0.12);
-  chipTone(LEAD_LINE[step], t + MUSIC_STEP * 0.08, MUSIC_STEP * 1.35, 'square', 0.055);
+  chipTone(BASS_LINE[step], funkT, MUSIC_STEP * 0.95, 'square', 0.16);
+  chipTone(LEAD_LINE[step], funkT + MUSIC_STEP * 0.08, MUSIC_STEP * 0.9, 'square', 0.06);
 
   if ([0, 3, 6].includes(step % 8)) {
     const root = CHORD_ROOTS[bar];
     [root + 12, root + 15, root + 19].forEach((n, i) => {
-      chipTone(n, t + i * 0.006, MUSIC_STEP * 1.15, 'triangle', 0.028);
+      chipTone(n, funkT + i * 0.006, MUSIC_STEP * 0.85, 'triangle', 0.035);
     });
   }
 
-  if (beat === 0 || beat === 10) chipTone(43, t, MUSIC_STEP * 0.75, 'square', 0.14, 34);
+  if (beat === 0 || beat === 6 || beat === 10) chipTone(43, t, MUSIC_STEP * 0.7, 'square', 0.16, 34);
   if (beat === 4 || beat === 12) {
     chipNoise(t, MUSIC_STEP * 0.9, 0.08, 900);
     chipTone(38, t, MUSIC_STEP * 0.55, 'square', 0.035, 31);
   }
-  if (step % 2 === 1) chipNoise(t, MUSIC_STEP * 0.35, 0.025, 4200);
+  if ([2, 7, 14].includes(beat)) chipNoise(funkT, MUSIC_STEP * 0.28, 0.035, 3600);
+  if (step % 2 === 1) chipNoise(funkT, MUSIC_STEP * 0.28, 0.024, 5200);
 }
 
 function scheduleMusic() {
